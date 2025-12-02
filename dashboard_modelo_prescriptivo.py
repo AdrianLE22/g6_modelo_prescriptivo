@@ -7,7 +7,23 @@ import pulp
 # ==========================
 # CONFIG
 # ==========================
-BASE_PATH = "C:/Users/Adrian/Desktop/analitica_labo/data_expo_final/csv_modelo_constelacion_sunat_mincetur"
+BASE_PATH = os.path.join(os.path.dirname(__file__), "data")
+
+
+# ==========================
+# CARGA DE PARQUETS
+# ==========================
+@st.cache_data
+def cargar_datos(base_path: str):
+    """
+    Lee los datasets ya procesados (a nivel de modelo constelación)
+    desde archivos Parquet.
+    - df_presc: exportaciones MINCETUR (anio, region, destino, bloque, sector, valor, toneladas)
+    - df_vias:  comercio exterior SUNAT agregado por año y via_transporte
+    """
+    df_presc = pd.read_parquet(os.path.join(base_path, "modelo_prescriptivo_dataset.parquet"))
+    df_vias  = pd.read_parquet(os.path.join(base_path, "sunat_vias_dataset.parquet"))
+    return df_presc, df_vias
 
 
 # ==========================
@@ -54,27 +70,20 @@ def formatear_tabla_porcentajes(df: pd.DataFrame, cols_pct) -> pd.DataFrame:
 
 
 # ==========================
-# CARGA DE CSV
-# ==========================
-@st.cache_data
-def cargar_csvs(base_path: str):
-    dim_calendario  = pd.read_csv(os.path.join(base_path, "dim_calendario.csv"))
-    dim_cuode       = pd.read_csv(os.path.join(base_path, "dim_cuode.csv"))
-    dim_pais        = pd.read_csv(os.path.join(base_path, "dim_pais.csv"))
-    dim_productos   = pd.read_csv(os.path.join(base_path, "dim_productos.csv"))
-    dim_via         = pd.read_csv(os.path.join(base_path, "dim_via.csv"))
-    fact_sunat      = pd.read_csv(os.path.join(base_path, "fact_comercio_sunat.csv"))
-    fact_mincetur   = pd.read_csv(os.path.join(base_path, "fact_exportaciones_MINCETUR.csv"))
-    return dim_calendario, dim_cuode, dim_pais, dim_productos, dim_via, fact_sunat, fact_mincetur
-
-
-# ==========================
 # CONSTRUCCIÓN DE MODELOS
 # ==========================
 @st.cache_data
-def construir_modelos(fact_mincetur, fact_sunat, dim_via, anio_desde, anio_hasta):
+def construir_modelos(df_presc, df_vias, anio_desde, anio_hasta):
+    """
+    df_presc: dataset prescriptivo MINCETUR (Parquet)
+        columnas mínimas: anio, region_mincetur, destino, bloque_comercial, sector,
+                          valor_millones, toneladas_metricas
+    df_vias: dataset de vías SUNAT (Parquet)
+        columnas mínimas: anio, via_transporte, valor_millones
+    """
+
     # ---- Filtrar rango de años ----
-    df = fact_mincetur.copy()
+    df = df_presc.copy()
     df = df[(df["anio"] >= anio_desde) & (df["anio"] <= anio_hasta)].copy()
     df = df[df["region_mincetur"].notna()].copy()
     df = df[df["toneladas_metricas"] > 0].copy()
@@ -201,7 +210,7 @@ def construir_modelos(fact_mincetur, fact_sunat, dim_via, anio_desde, anio_hasta
 
         return tmp.groupby(dimension)["contribucion_dim"].sum().sort_values(ascending=False)
 
-    # ---- Histórico por dimensión ----
+    # ---- Histórico por dimensión (MINCETUR) ----
     bloque_hist = df.groupby("bloque_comercial")["valor_millones"].sum()
     bloque_hist_share = bloque_hist / bloque_hist.sum()
 
@@ -222,14 +231,13 @@ def construir_modelos(fact_mincetur, fact_sunat, dim_via, anio_desde, anio_hasta
     pais_oper_share  = distribucion_por_dimension(df, "destino", region_opt_oper)
 
     # --------------------------------------------
-    # Vías históricas (SUNAT)
+    # Vías históricas (SUNAT) usando df_vias parquet
     # --------------------------------------------
-    fact_sunat_via = fact_sunat.merge(
-        dim_via[["codigo_via", "via_transporte"]],
-        on="codigo_via",
-        how="left"
-    )
-    via_hist = fact_sunat_via.groupby("via_transporte")["valor_millones"].sum()
+    vias_filtrado = df_vias[
+        (df_vias["anio"] >= anio_desde) & (df_vias["anio"] <= anio_hasta)
+    ].copy()
+
+    via_hist = vias_filtrado.groupby("via_transporte")["valor_millones"].sum()
     via_hist_share = via_hist / via_hist.sum()
 
     return (
@@ -257,10 +265,11 @@ st.set_page_config(page_title="Modelo Prescriptivo Comercio Exterior", layout="w
 st.title("Modelo Prescriptivo de Comercio Exterior del Perú")
 st.caption("Basado en modelo constelación SUNAT–MINCETUR, con visión estratégica y operativa (toneladas y millones).")
 
-dim_calendario, dim_cuode, dim_pais, dim_productos, dim_via, fact_sunat, fact_mincetur = cargar_csvs(BASE_PATH)
+# Cargamos datos desde Parquet
+df_presc, df_vias = cargar_datos(BASE_PATH)
 
 # ---- Filtros globales ----
-anios = sorted(fact_mincetur["anio"].unique())
+anios = sorted(df_presc["anio"].unique())
 anio_min, anio_max = int(anios[0]), int(anios[-1])
 
 anio_desde, anio_hasta = st.sidebar.slider(
@@ -299,7 +308,7 @@ top_n = st.sidebar.slider("Top N categorías a mostrar", 5, 30, 10)
     pais_strat_share,
     pais_oper_share,
     via_hist_share,
-) = construir_modelos(fact_mincetur, fact_sunat, dim_via, anio_desde, anio_hasta)
+) = construir_modelos(df_presc, df_vias, anio_desde, anio_hasta)
 
 
 # =============== VISTAS ===============

@@ -7,7 +7,7 @@ import pulp
 # ==========================
 # CONFIG
 # ==========================
-BASE_PATH = r"C:\Users\Adrian\Desktop\analitica_labo\data_expo_final\csv_modelo_constelacion_sunat_mincetur"
+BASE_PATH = "C:/Users/Adrian/Desktop/analitica_labo/data_expo_final/csv_modelo_constelacion_sunat_mincetur"
 
 
 # ==========================
